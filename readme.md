@@ -60,6 +60,12 @@ Your project must already include the following dependencies (these are typicall
     <artifactId>jakarta.servlet-api</artifactId>
     <version>6.0.0</version>
 </dependency>
+
+<dependency>
+    <groupId>org.bouncycastle</groupId>
+    <artifactId>bcprov-jdk18on</artifactId>
+    <version>1.83</version>
+</dependency>
 ```
 
 These dependencies are marked as **provided** inside Jwt Security because they are expected to already exist in your application.
@@ -89,12 +95,6 @@ Jwt Security includes several dependencies that are automatically included when 
     <groupId>io.jsonwebtoken</groupId>
     <artifactId>jjwt-jackson</artifactId>
     <version>0.12.5</version>
-</dependency>
-
-<dependency>
-    <groupId>org.bouncycastle</groupId>
-    <artifactId>bcprov-jdk18on</artifactId>
-    <version>1.83</version>
 </dependency>
 ```
 
