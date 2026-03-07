@@ -14,7 +14,7 @@ Built for modern Java (Java 21+) and designed to integrate seamlessly with exist
 
 - Ed25519 (EdDSA) asymmetric signatures — no shared secrets, FAPI 2.0 compliant, TLS 1.3 approved
 - Separate key pairs for access and refresh tokens (key isolation)
-- Persistent or ephemeral key pairs — survive restarts or invalidate all sessions on deploy
+- Deterministic or ephemeral key pairs — derive from a master secret for multi-instance, or generate fresh on startup
 - Token fingerprint binding — defeats token theft via XSS
 - Refresh token rotation with reuse detection — replayed tokens trigger full account revocation
 - Constant-time hash comparisons to prevent timing side-channel attacks
@@ -36,6 +36,13 @@ Jwt Security is designed for Spring-based web applications.
 Your project must already include the following dependencies (these are typically already included in most Spring Boot applications):
 
 ```xml
+<dependency>
+    <groupId>org.projectlombok</groupId>
+    <artifactId>lombok</artifactId>
+    <version>1.18.36</version>
+    <scope>provided</scope>
+</dependency>
+
 <dependency>
     <groupId>org.springframework</groupId>
     <artifactId>spring-context</artifactId>
@@ -82,6 +89,12 @@ Jwt Security includes several dependencies that are automatically included when 
     <groupId>io.jsonwebtoken</groupId>
     <artifactId>jjwt-jackson</artifactId>
     <version>0.12.5</version>
+</dependency>
+
+<dependency>
+    <groupId>org.bouncycastle</groupId>
+    <artifactId>bcprov-jdk18on</artifactId>
+    <version>1.83</version>
 </dependency>
 ```
 
@@ -167,7 +180,9 @@ public class AccountManager implements JwtAccountManagerProvider<Account> {
 
 ### 4. Implement Your Settings
 
-Configure the JWT service with your environment settings:
+Configure the JWT service with your environment settings.
+
+**Deterministic keys** (recommended for multi-instance deployments):
 
 ```java
 @Service
@@ -180,14 +195,33 @@ public class MyJwtSettings implements JwtSettingsProvider {
     public String getIssuer() { return "myapp.com"; }
 
     @Override
-    public boolean isPersistentKeys() { return true; }
+    public byte[] getAccessTokenKeySeed() {
+        // Derive a deterministic 32-byte seed from your master secret via HKDF.
+        // Every instance with the same master secret produces the same key pair.
+        return deriveKey("JWT:ACCESS_TOKEN");
+    }
 
     @Override
-    public String getAccessTokenKeyPath() { return "/opt/myapp/keys/access-token.key"; }
+    public byte[] getRefreshTokenKeySeed() {
+        return deriveKey("JWT:REFRESH_TOKEN");
+    }
 
-    @Override
-    public String getRefreshTokenKeyPath() { return "/opt/myapp/keys/refresh-token.key"; }
+    private byte[] deriveKey(final String context) {
+        // Your HKDF or key derivation implementation here.
+        // Must return exactly 32 bytes for Ed25519.
+        return Arrays.copyOf(yourKeyDerivation.derive(context), 32);
+    }
 }
+```
+
+**Ephemeral keys** (tokens invalidated on every restart):
+
+```java
+@Override
+public byte[] getAccessTokenKeySeed() { return null; }
+
+@Override
+public byte[] getRefreshTokenKeySeed() { return null; }
 ```
 
 ### 5. Create Your JwtService Subclass
@@ -208,28 +242,21 @@ This is the recommended approach. You define the generics once here, and inject 
 
 ---
 
-## Key Persistence
+## Key Derivation
 
 Jwt Security supports two modes for Ed25519 key pair management.
 
+### Deterministic Keys (recommended for multi-instance)
+
+When `getAccessTokenKeySeed()` and `getRefreshTokenKeySeed()` return a 32-byte seed, deterministic Ed25519 key pairs are derived using BouncyCastle. Every application instance with the same master secret produces identical key pairs — no shared key files, no mounted volumes, no key distribution.
+
+The seed is wiped from memory immediately after key derivation.
+
+This is the recommended approach for production deployments with multiple instances behind a load balancer.
+
 ### Ephemeral Keys (default)
 
-When `isPersistentKeys()` returns `false`, new key pairs are generated at startup. All outstanding tokens are invalidated on every restart. This is the most secure option and suitable for applications where forced re-authentication on deploy is acceptable.
-
-### Persistent Keys
-
-When `isPersistentKeys()` returns `true`, key pairs are loaded from the file paths specified in your settings. On first startup, if the key files don't exist, they are automatically generated and saved to disk. Subsequent startups load the existing keys, preserving all active sessions across restarts.
-
-The following files are created on first startup:
-
-```
-/opt/myapp/keys/access-token.key       (private key, PKCS#8 DER)
-/opt/myapp/keys/access-token.key.pub   (public key, X.509 DER)
-/opt/myapp/keys/refresh-token.key      (private key, PKCS#8 DER)
-/opt/myapp/keys/refresh-token.key.pub  (public key, X.509 DER)
-```
-
-On Unix systems, private key files are automatically restricted to owner-read-only permissions.
+When the seed methods return `null`, new key pairs are generated at startup using the JDK's built-in Ed25519 provider. All outstanding tokens are invalidated on every restart. This is the most secure option and suitable for applications where forced re-authentication on deploy is acceptable.
 
 ---
 
@@ -285,6 +312,7 @@ public class AuthController {
 |---|---|
 | **Signature Algorithm** | Ed25519 (EdDSA) — asymmetric, deterministic, side-channel resistant |
 | **Key Isolation** | Separate key pairs for access and refresh tokens |
+| **Key Derivation** | HKDF from master secret → deterministic Ed25519 seeds (multi-instance safe) |
 | **Token Binding** | Fingerprint hash in JWT + raw value in HttpOnly cookie |
 | **XSS Defence** | HttpOnly cookies — JavaScript cannot access token values |
 | **CSRF Defence** | SameSite=Strict in production — browser blocks cross-origin requests |
@@ -294,3 +322,4 @@ public class AuthController {
 | **Reuse Detection** | Mismatched refresh token hash triggers full account revocation |
 | **Session Invalidation** | lastTokenIssueAt — update the timestamp to revoke all tokens instantly |
 | **Timing Attacks** | Constant-time hash comparisons on all verification checks |
+| **Memory Safety** | Key seeds wiped from memory immediately after derivation |

@@ -16,23 +16,23 @@ package io.github.trae.jwtsecurity.providers;
  *     public String getIssuer() { return "myapp.com"; }
  *
  *     &#64;Override
- *     public boolean isPersistentKeys() { return true; }
+ *     public byte[] getAccessTokenKeySeed() {
+ *         return null;
+ *     }
  *
  *     &#64;Override
- *     public String getAccessTokenKeyPath() { return "/opt/myapp/keys/access-token.key"; }
- *
- *     &#64;Override
- *     public String getRefreshTokenKeyPath() { return "/opt/myapp/keys/refresh-token.key"; }
+ *     public byte[] getRefreshTokenKeySeed() {
+ *         return null;
+ *     }
  * }
  * </pre>
  *
- * <p>When persistent keys are enabled, the following files are created on first startup:</p>
- * <pre>
- * /opt/myapp/keys/access-token.key       (private key, PKCS#8 DER)
- * /opt/myapp/keys/access-token.key.pub   (public key, X.509 DER)
- * /opt/myapp/keys/refresh-token.key      (private key, PKCS#8 DER)
- * /opt/myapp/keys/refresh-token.key.pub  (public key, X.509 DER)
- * </pre>
+ * <p>When key seeds are provided, deterministic Ed25519 key pairs are derived from them
+ * using BouncyCastle. Every application instance with the same master secret produces
+ * identical key pairs, enabling multi-instance deployments without shared key files.</p>
+ *
+ * <p>When key seeds return {@code null}, ephemeral key pairs are generated at startup
+ * and all outstanding tokens are invalidated on restart.</p>
  */
 public interface JwtSettingsProvider {
 
@@ -52,32 +52,32 @@ public interface JwtSettingsProvider {
     String getIssuer();
 
     /**
-     * Whether to persist Ed25519 key pairs to disk.
+     * Optional 32-byte seed for deterministic Ed25519 access token key derivation.
+     * When non-null, the key pair is derived from this seed — identical across all instances
+     * sharing the same master secret.
+     * When null, an ephemeral key pair is generated at startup (invalidated on restart).
      *
-     * <p>When {@code true}, key pairs are loaded from the paths returned by
-     * {@link #getAccessTokenKeyPath()} and {@link #getRefreshTokenKeyPath()}.
-     * If the files don't exist, new key pairs are generated and saved.</p>
+     * <p>Typically derived from a master secret via HKDF:</p>
+     * <pre>
+     * Arrays.copyOf(RootKeyEngine.derive("JWT:ACCESS_TOKEN").getBytes(), 32);
+     * </pre>
      *
-     * <p>When {@code false}, ephemeral key pairs are generated at startup
-     * and all outstanding tokens are invalidated on restart.</p>
-     *
-     * @return true to persist keys across restarts
+     * @return exactly 32 bytes for Ed25519 seed derivation, or null for ephemeral keys
      */
-    boolean isPersistentKeys();
+    byte[] getAccessTokenKeySeed();
 
     /**
-     * File path for the access token Ed25519 key pair.
-     * Only used when {@link #isPersistentKeys()} is {@code true}.
+     * Optional 32-byte seed for deterministic Ed25519 refresh token key derivation.
+     * When non-null, the key pair is derived from this seed — identical across all instances
+     * sharing the same master secret.
+     * When null, an ephemeral key pair is generated at startup (invalidated on restart).
      *
-     * @return the path, e.g. {@code "/opt/myapp/keys/access-token.key"}
-     */
-    String getAccessTokenKeyPath();
-
-    /**
-     * File path for the refresh token Ed25519 key pair.
-     * Only used when {@link #isPersistentKeys()} is {@code true}.
+     * <p>Typically derived from a master secret via HKDF:</p>
+     * <pre>
+     * Arrays.copyOf(RootKeyEngine.derive("JWT:REFRESH_TOKEN").getBytes(), 32);
+     * </pre>
      *
-     * @return the path, e.g. {@code "/opt/myapp/keys/refresh-token.key"}
+     * @return exactly 32 bytes for Ed25519 seed derivation, or null for ephemeral keys
      */
-    String getRefreshTokenKeyPath();
+    byte[] getRefreshTokenKeySeed();
 }

@@ -16,20 +16,19 @@ import io.micrometer.common.util.internal.logging.InternalLogger;
 import io.micrometer.common.util.internal.logging.Slf4JLoggerFactory;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
+import org.bouncycastle.crypto.util.PrivateKeyInfoFactory;
+import org.bouncycastle.crypto.util.SubjectPublicKeyInfoFactory;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
 import java.security.*;
-import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -39,6 +38,7 @@ import java.util.UUID;
  * <ul>
  *   <li>Ed25519 asymmetric signatures — no shared secrets, FAPI 2.0 compliant, TLS 1.3 approved</li>
  *   <li>Separate key pairs for access and refresh tokens (key isolation)</li>
+ *   <li>Deterministic or ephemeral key pairs — derive from a master secret for multi-instance, or generate fresh on startup</li>
  *   <li>Token fingerprint binding via HttpOnly cookie (defeats XSS token theft)</li>
  *   <li>Refresh token rotation with reuse detection — replayed tokens trigger full account revocation</li>
  *   <li>lastTokenIssueAt validation — instant global token invalidation without a blocklist</li>
@@ -77,9 +77,13 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
     /**
      * Construct the JWT service with the application's settings and account manager.
      *
-     * <p>Generates ephemeral Ed25519 key pairs for access and refresh tokens at startup.
-     * All outstanding tokens are invalidated on restart — this is a security feature.
-     * For persistence across restarts, load key pairs from an encrypted keystore or vault.</p>
+     * <p>Resolves Ed25519 key pairs based on the settings provider:</p>
+     * <ul>
+     *   <li>If key seeds are provided, deterministic key pairs are derived using BouncyCastle.
+     *       Every instance with the same master secret produces identical keys.</li>
+     *   <li>If key seeds are null, ephemeral key pairs are generated at startup.
+     *       All outstanding tokens are invalidated on restart.</li>
+     * </ul>
      *
      * <p>Pre-builds thread-safe JWT parsers with issuer, audience, and clock skew
      * validation rules so they don't need to be reconstructed on every request.</p>
@@ -91,11 +95,9 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
         this.settings = settings;
         this.accountManager = accountManager;
 
-        // Generate separate Ed25519 key pairs for access and refresh tokens.
-        // Keys are ephemeral — all tokens are invalidated on restart (a security feature).
-        // For persistence across restarts, load from an encrypted keystore or vault.
-        this.accessTokenKeyPair = this.generateKeyPair();
-        this.refreshTokenKeyPair = this.generateKeyPair();
+        // Resolve key pairs — deterministic from seed, or ephemeral.
+        this.accessTokenKeyPair = this.resolveKeyPair(settings.getAccessTokenKeySeed(), "access-token");
+        this.refreshTokenKeyPair = this.resolveKeyPair(settings.getRefreshTokenKeySeed(), "refresh-token");
 
         // Pre-build parsers with all validation rules baked in (thread-safe, reusable).
         this.accessTokenParser = Jwts.parser()
@@ -417,22 +419,44 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  Internal — Key Generation
+    //  Internal — Key Resolution
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * Generate an Ed25519 key pair using the JDK's built-in SunEC provider (JDK 15+).
+     * Resolve an Ed25519 key pair from a seed or generate an ephemeral one.
      *
-     * <p>Why Ed25519 over HMAC-SHA512 / RSA / ECDSA:</p>
-     * <ul>
-     *   <li>Asymmetric — compromising the verification side can't forge tokens</li>
-     *   <li>Side-channel resistant — constant-time, no secret-dependent branching</li>
-     *   <li>Deterministic — no random nonce per signature (bad RNG can't leak the key)</li>
-     *   <li>One of only 3 signature schemes allowed in TLS 1.3</li>
-     *   <li>FAPI 2.0 compliant — approved for financial-grade APIs</li>
-     *   <li>Compact 64-byte signatures (vs 256+ bytes for RSA-2048)</li>
-     *   <li>Faster than RSA and ECDSA for both signing and verification</li>
-     * </ul>
+     * <p>When a 32-byte seed is provided, a deterministic key pair is derived using
+     * BouncyCastle. Every instance with the same seed produces identical keys,
+     * enabling multi-instance deployments without shared key files.</p>
+     *
+     * <p>When the seed is null, an ephemeral key pair is generated at startup.
+     * All outstanding tokens are invalidated on restart.</p>
+     *
+     * @param seed  exactly 32 bytes for deterministic derivation, or null for ephemeral
+     * @param label a human-readable label for logging
+     * @return the resolved Ed25519 key pair
+     */
+    private KeyPair resolveKeyPair(final byte[] seed, final String label) {
+        if (seed == null || seed.length == 0) {
+            LOGGER.info("Generating ephemeral Ed25519 key pair for: {}", label);
+            return this.generateKeyPair();
+        }
+
+        if (seed.length != 32) {
+            throw new IllegalArgumentException("Ed25519 key seed must be exactly 32 bytes, got: " + seed.length);
+        }
+
+        LOGGER.info("Deriving deterministic Ed25519 key pair for: {}", label);
+        final KeyPair keyPair = this.deriveKeyPairFromSeed(seed);
+
+        // Wipe the seed from memory after derivation.
+        Arrays.fill(seed, (byte) 0);
+
+        return keyPair;
+    }
+
+    /**
+     * Generate an ephemeral Ed25519 key pair using the JDK's built-in SunEC provider (JDK 15+).
      *
      * @return the generated Ed25519 key pair
      * @throws IllegalStateException if Ed25519 is not available (requires JDK 15+)
@@ -442,6 +466,40 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
             return KeyPairGenerator.getInstance(JwtConstants.KEY_PAIR_ALGORITHM).generateKeyPair();
         } catch (final NoSuchAlgorithmException e) {
             throw new IllegalStateException("%s unavailable - requires JDK 15+. Running: %s".formatted(JwtConstants.KEY_PAIR_ALGORITHM, System.getProperty("java.version")), e);
+        }
+    }
+
+    /**
+     * Derive a deterministic Ed25519 key pair from a 32-byte seed using BouncyCastle.
+     *
+     * <p>The seed is used as the Ed25519 private key material. The public key is
+     * mathematically derived from it. Every call with the same seed produces
+     * the same key pair — enabling multi-instance deployments where all instances
+     * share a master secret but don't need shared key files.</p>
+     *
+     * @param seed exactly 32 bytes
+     * @return the deterministic Ed25519 key pair compatible with the JDK KeyPair API
+     */
+    private KeyPair deriveKeyPairFromSeed(final byte[] seed) {
+        try {
+            // Construct Ed25519 private key from seed using BouncyCastle.
+            final Ed25519PrivateKeyParameters privateParams = new Ed25519PrivateKeyParameters(seed, 0);
+            final Ed25519PublicKeyParameters publicParams = privateParams.generatePublicKey();
+
+            // Convert BouncyCastle key parameters to JDK key types via encoded form.
+            final KeyFactory keyFactory = KeyFactory.getInstance(JwtConstants.KEY_PAIR_ALGORITHM);
+
+            final PrivateKey privateKey = keyFactory.generatePrivate(
+                    new PKCS8EncodedKeySpec(PrivateKeyInfoFactory.createPrivateKeyInfo(privateParams).getEncoded())
+            );
+
+            final PublicKey publicKey = keyFactory.generatePublic(
+                    new X509EncodedKeySpec(SubjectPublicKeyInfoFactory.createSubjectPublicKeyInfo(publicParams).getEncoded())
+            );
+
+            return new KeyPair(publicKey, privateKey);
+        } catch (final Exception e) {
+            throw new IllegalStateException("Failed to derive Ed25519 key pair from seed", e);
         }
     }
 
@@ -654,95 +712,5 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
         final byte[] bytes = new byte[byteLength];
         SECURE_RANDOM.nextBytes(bytes);
         return UtilHash.toHex(bytes);
-    }
-
-    /**
-     * Resolve an Ed25519 key pair based on the persistence setting.
-     *
-     * <p>When persistent keys are enabled, attempts to load from disk first.
-     * If the file doesn't exist, generates a new key pair and saves it.
-     * When disabled, generates an ephemeral key pair (invalidated on restart).</p>
-     *
-     * @param settings the settings provider
-     * @param keyPath  the file path to load/save the key pair
-     * @param label    a human-readable label for logging
-     * @return the resolved Ed25519 key pair
-     */
-    private KeyPair resolveKeyPair(final Settings settings, final String keyPath, final String label) {
-        if (!(settings.isPersistentKeys()) || UtilString.isEmpty(keyPath)) {
-            LOGGER.info("Generating ephemeral Ed25519 key pair for: {}", label);
-            return this.generateKeyPair();
-        }
-
-        final Path path = Path.of(keyPath);
-
-        if (Files.exists(path)) {
-            LOGGER.info("Loading persistent Ed25519 key pair for: {} from: {}", label, keyPath);
-            return this.loadKeyPair(path);
-        }
-
-        LOGGER.info("Generating and persisting Ed25519 key pair for: {} to: {}", label, keyPath);
-        final KeyPair keyPair = this.generateKeyPair();
-        this.saveKeyPair(keyPair, path);
-        return keyPair;
-    }
-
-    /**
-     * Save an Ed25519 key pair to disk in PKCS#8 (private) and X.509 (public) DER format.
-     * Creates parent directories if they don't exist. Sets file permissions to owner-read-only.
-     *
-     * @param keyPair the key pair to save
-     * @param path    the file path for the private key (public key saved alongside with .pub suffix)
-     */
-    private void saveKeyPair(final KeyPair keyPair, final Path path) {
-        try {
-            final Path parent = path.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-
-            final Path publicKeyPath = Path.of(path + ".pub");
-
-            Files.write(path, keyPair.getPrivate().getEncoded());
-            Files.write(publicKeyPath, keyPair.getPublic().getEncoded());
-
-            // Restrict to owner-read-only on Unix systems.
-            try {
-                Files.setPosixFilePermissions(path, Set.of(PosixFilePermission.OWNER_READ));
-                Files.setPosixFilePermissions(publicKeyPath, Set.of(PosixFilePermission.OWNER_READ));
-            } catch (final UnsupportedOperationException ignored) {
-                LOGGER.warn("Unable to set POSIX permissions on key file: {} — restrict manually", path);
-            }
-        } catch (final IOException e) {
-            throw new IllegalStateException("Failed to save Ed25519 key pair to: " + path, e);
-        }
-    }
-
-    /**
-     * Load an Ed25519 key pair from disk.
-     * Expects PKCS#8 DER private key at the given path and X.509 DER public key at path + ".pub".
-     *
-     * @param path the path to the private key file
-     * @return the loaded Ed25519 key pair
-     * @throws IllegalStateException if the files can't be read or the keys are invalid
-     */
-    private KeyPair loadKeyPair(final Path path) {
-        try {
-            final Path publicKeyPath = Path.of(path + ".pub");
-
-            final byte[] privateKeyBytes = Files.readAllBytes(path);
-            final byte[] publicKeyBytes = Files.readAllBytes(publicKeyPath);
-
-            final KeyFactory keyFactory = KeyFactory.getInstance(JwtConstants.KEY_PAIR_ALGORITHM);
-
-            final PrivateKey privateKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(privateKeyBytes));
-            final PublicKey publicKey = keyFactory.generatePublic(new X509EncodedKeySpec(publicKeyBytes));
-
-            return new KeyPair(publicKey, privateKey);
-        } catch (final IOException e) {
-            throw new IllegalStateException("Failed to read %s key pair from: %s".formatted(JwtConstants.KEY_PAIR_ALGORITHM, path), e);
-        } catch (final NoSuchAlgorithmException | InvalidKeySpecException e) {
-            throw new IllegalStateException("Failed to decode %s key pair from: %s".formatted(JwtConstants.KEY_PAIR_ALGORITHM, path), e);
-        }
     }
 }
