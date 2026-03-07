@@ -438,15 +438,15 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
      */
     private KeyPair resolveKeyPair(final byte[] seed, final String label) {
         if (seed == null || seed.length == 0) {
-            LOGGER.info("Generating ephemeral Ed25519 key pair for: {}", label);
+            LOGGER.info("Generating ephemeral {} key pair for: {}", JwtConstants.KEY_PAIR_ALGORITHM, label);
             return this.generateKeyPair();
         }
 
         if (seed.length != 32) {
-            throw new IllegalArgumentException("Ed25519 key seed must be exactly 32 bytes, got: " + seed.length);
+            throw new IllegalArgumentException("%s key seed must be exactly 32 bytes, got: %s".formatted(JwtConstants.KEY_PAIR_ALGORITHM, seed.length));
         }
 
-        LOGGER.info("Deriving deterministic Ed25519 key pair for: {}", label);
+        LOGGER.info("Deriving deterministic {} key pair for: {}", JwtConstants.KEY_PAIR_ALGORITHM, label);
         final KeyPair keyPair = this.deriveKeyPairFromSeed(seed);
 
         // Wipe the seed from memory after derivation.
@@ -489,13 +489,9 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
             // Convert BouncyCastle key parameters to JDK key types via encoded form.
             final KeyFactory keyFactory = KeyFactory.getInstance(JwtConstants.KEY_PAIR_ALGORITHM);
 
-            final PrivateKey privateKey = keyFactory.generatePrivate(
-                    new PKCS8EncodedKeySpec(PrivateKeyInfoFactory.createPrivateKeyInfo(privateParams).getEncoded())
-            );
+            final PrivateKey privateKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(PrivateKeyInfoFactory.createPrivateKeyInfo(privateParams).getEncoded()));
 
-            final PublicKey publicKey = keyFactory.generatePublic(
-                    new X509EncodedKeySpec(SubjectPublicKeyInfoFactory.createSubjectPublicKeyInfo(publicParams).getEncoded())
-            );
+            final PublicKey publicKey = keyFactory.generatePublic(new X509EncodedKeySpec(SubjectPublicKeyInfoFactory.createSubjectPublicKeyInfo(publicParams).getEncoded()));
 
             return new KeyPair(publicKey, privateKey);
         } catch (final Exception e) {
