@@ -1,9 +1,17 @@
 package io.github.trae.jwtsecurity.constants;
 
+import io.github.trae.jwtsecurity.enums.TokenType;
+
+import java.time.Duration;
+
 /**
  * Constants used throughout the JWT security framework.
  */
 public class JwtConstants {
+
+    public static final Duration ACCESS_TOKEN_EXPIRATION_DURATION = TokenType.ACCESS_TOKEN.getExpiration();
+
+    public static final Duration REFRESH_TOKEN_EXPIRATION_DURATION = TokenType.REFRESH_TOKEN.getExpiration();
 
     /**
      * Asymmetric key pair algorithm — Ed25519 (EdDSA).

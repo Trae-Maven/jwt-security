@@ -290,12 +290,12 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
 
         // Store the refresh token hash server-side for rotation and reuse detection.
         // On the next refresh, the presented JTI is hashed and compared — mismatch means theft.
-        account.setRefreshToken(new RefreshToken(UtilHash.hashToString("SHA-512", refreshToken), now + TokenType.REFRESH_TOKEN.getExpiration().toMillis()));
+        account.setRefreshToken(new RefreshToken(UtilHash.hashToString("SHA-512", refreshToken), now + JwtConstants.REFRESH_TOKEN_EXPIRATION_DURATION.toMillis()));
         this.accountManager.updateAccountRefreshToken(account);
 
-        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.ACCESS_TOKEN.getKey(), accessToken, true, TokenType.ACCESS_TOKEN.getExpiration(), SERIALIZE_COOKIE);
-        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.REFRESH_TOKEN.getKey(), refreshToken, true, TokenType.REFRESH_TOKEN.getExpiration(), SERIALIZE_COOKIE);
-        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, JwtConstants.FINGERPRINT_COOKIE, rawFingerprint, true, TokenType.REFRESH_TOKEN.getExpiration(), SERIALIZE_COOKIE);
+        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.ACCESS_TOKEN.getKey(), accessToken, true, JwtConstants.ACCESS_TOKEN_EXPIRATION_DURATION, SERIALIZE_COOKIE);
+        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.REFRESH_TOKEN.getKey(), refreshToken, true, JwtConstants.REFRESH_TOKEN_EXPIRATION_DURATION, SERIALIZE_COOKIE);
+        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, JwtConstants.FINGERPRINT_COOKIE, rawFingerprint, true, JwtConstants.REFRESH_TOKEN_EXPIRATION_DURATION, SERIALIZE_COOKIE);
     }
 
     /**
