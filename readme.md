@@ -185,7 +185,7 @@ Configure the JWT service with your environment settings.
 **Deterministic keys** (recommended for multi-instance deployments):
 
 ```java
-@Service
+@Component
 public class MyJwtSettings implements JwtSettingsProvider {
 
     @Override
