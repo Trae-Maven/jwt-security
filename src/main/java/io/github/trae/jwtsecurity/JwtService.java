@@ -686,9 +686,7 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
             return false;
         }
 
-        final String actualHash = UtilHash.hashToString("SHA-256", rawFingerprint);
-
-        return UtilHash.verify("SHA-256", expectedHash, actualHash);
+        return UtilHash.verify("SHA-256", rawFingerprint, expectedHash);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
