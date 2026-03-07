@@ -681,7 +681,7 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
             return true;
         }
 
-        final String rawFingerprint = UtilCookie.getCookie(this.settings.isProduction(), httpServletRequest, JwtConstants.FINGERPRINT_COOKIE, false);
+        final String rawFingerprint = UtilCookie.getCookie(this.settings.isProduction(), httpServletRequest, JwtConstants.FINGERPRINT_COOKIE, SERIALIZE_COOKIE);
         if (UtilString.isEmpty(rawFingerprint)) {
             return false;
         }
