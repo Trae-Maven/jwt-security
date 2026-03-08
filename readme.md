@@ -110,7 +110,7 @@ Add the dependency to your Maven project:
 <dependency>
     <groupId>io.github.trae</groupId>
     <artifactId>jwt-security</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2</version>
 </dependency>
 ```
 
