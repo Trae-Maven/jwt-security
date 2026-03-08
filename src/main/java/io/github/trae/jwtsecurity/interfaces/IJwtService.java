@@ -35,7 +35,7 @@ public interface IJwtService<Account extends JwtAccountProvider<Role>, Role exte
 
     Optional<Account> getAccountByRequest(final HttpServletRequest httpServletRequest, final HttpServletResponse httpServletResponse);
 
-    void applyTokenCookies(final HttpServletResponse httpServletResponse, final Account account);
+    void applyTokenCookies(final HttpServletRequest httpServletRequest, final HttpServletResponse httpServletResponse, final Account account);
 
     void removeTokenCookies(final HttpServletResponse httpServletResponse, final Account account);
 

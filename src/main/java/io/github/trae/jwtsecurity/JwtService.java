@@ -269,17 +269,26 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
      * @param account             the account to issue tokens for
      */
     @Override
-    public void applyTokenCookies(final HttpServletResponse httpServletResponse, final Account account) {
+    public void applyTokenCookies(final HttpServletRequest httpServletRequest, final HttpServletResponse httpServletResponse, final Account account) {
         final long now = System.currentTimeMillis();
 
         // Update the issuance timestamp — all tokens issued before this moment become invalid.
         account.setLastTokenIssueAt(now);
         this.accountManager.updateAccountLastTokenIssueAt(account);
 
-        // Generate a cryptographically random fingerprint for token binding.
-        // The raw value goes into an HttpOnly cookie; its SHA-256 hash is embedded in the JWTs.
-        // Even if an attacker exfiltrates a JWT via XSS, it's useless without the HttpOnly cookie.
-        final String rawFingerprint = this.generateSecureRandom(32);
+        // Retrieve the existing fingerprint cookie if one already exists.
+        // This fingerprint binds the JWT to the browser via an HttpOnly cookie.
+        // If a token is stolen through XSS, it cannot be used without this cookie.
+        String rawFingerprint = UtilCookie.getCookie(this.settings.isProduction(), httpServletRequest, JwtConstants.FINGERPRINT_COOKIE, SERIALIZE_COOKIE);
+
+        // If the fingerprint cookie does not exist (e.g., first login or cookies cleared),
+        // generate a new cryptographically secure random fingerprint.
+        // The raw value is stored in an HttpOnly cookie, while its SHA-256 hash is embedded
+        // inside the JWT. This allows the server to verify the cookie and token are paired.
+        if (UtilString.isEmpty(rawFingerprint)) {
+            rawFingerprint = this.generateSecureRandom(32);
+        }
+
         final String fingerprintHash = UtilHash.hashToString("SHA-256", rawFingerprint);
 
         final UUID accessJti = UUID.randomUUID();
@@ -290,7 +299,7 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
 
         // Store the refresh token hash server-side for rotation and reuse detection.
         // On the next refresh, the presented JTI is hashed and compared — mismatch means theft.
-        account.setRefreshToken(new RefreshToken(UtilHash.hashToString("SHA-512", refreshToken), now + JwtConstants.REFRESH_TOKEN_EXPIRATION_DURATION.toMillis()));
+        account.setRefreshToken(new RefreshToken(UtilHash.hashToString("SHA-512", refreshJti.toString()), now + JwtConstants.REFRESH_TOKEN_EXPIRATION_DURATION.toMillis()));
         this.accountManager.updateAccountRefreshToken(account);
 
         UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.ACCESS_TOKEN.getKey(), accessToken, true, JwtConstants.ACCESS_TOKEN_EXPIRATION_DURATION, SERIALIZE_COOKIE);
@@ -388,7 +397,7 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
         // Validate lastTokenIssueAt — if the account's timestamp was updated
         // (password change, forced logout), all previously issued tokens are rejected.
         final Long lastTokenIssuedAt = claims.get(JwtConstants.CLAIM_LAST_ISSUE, Long.class);
-        if (lastTokenIssuedAt == null || lastTokenIssuedAt < account.getLastTokenIssueAt()) {
+        if (lastTokenIssuedAt == null || lastTokenIssuedAt + 2000L < account.getLastTokenIssueAt()) {
             LOGGER.debug("Refresh token lastTokenIssueAt stale for account: {}", accountId.toString());
             return Optional.empty();
         }
@@ -654,7 +663,7 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
         final Account refreshedAccount = refreshedAccountOptional.get();
 
         // Issue new tokens — the old refresh JTI hash is overwritten during rotation.
-        this.applyTokenCookies(httpServletResponse, refreshedAccount);
+        this.applyTokenCookies(httpServletRequest, httpServletResponse, refreshedAccount);
 
         return Optional.of(refreshedAccount);
     }
