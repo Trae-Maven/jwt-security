@@ -20,6 +20,8 @@ import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
 import org.bouncycastle.crypto.util.PrivateKeyInfoFactory;
 import org.bouncycastle.crypto.util.SubjectPublicKeyInfoFactory;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
 
 import java.security.*;
@@ -51,6 +53,7 @@ import java.util.UUID;
  * @param <Account>        the application's account entity type
  * @param <Role>           the application's role enum type
  */
+@Order(Ordered.HIGHEST_PRECEDENCE)
 @Service
 public class JwtService<Settings extends JwtSettingsProvider, AccountManager extends JwtAccountManagerProvider<Account>, Account extends JwtAccountProvider<Role>, Role extends JwtAccountRoleProvider> implements IJwtService<Account, Role> {
 
