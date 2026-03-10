@@ -196,20 +196,12 @@ public class MyJwtSettings implements JwtSettingsProvider {
 
     @Override
     public byte[] getAccessTokenKeySeed() {
-        // Derive a deterministic 32-byte seed from your master secret via HKDF.
-        // Every instance with the same master secret produces the same key pair.
-        return deriveKey("JWT:ACCESS_TOKEN");
+        return KeyDerivation.derive("my-master-secret:access");
     }
 
     @Override
     public byte[] getRefreshTokenKeySeed() {
-        return deriveKey("JWT:REFRESH_TOKEN");
-    }
-
-    private byte[] deriveKey(final String context) {
-        // Your HKDF or key derivation implementation here.
-        // Must return exactly 32 bytes for Ed25519.
-        return Arrays.copyOf(yourKeyDerivation.derive(context), 32);
+        return KeyDerivation.derive("my-master-secret:refresh");
     }
 }
 ```
@@ -254,9 +246,31 @@ The seed is wiped from memory immediately after key derivation.
 
 This is the recommended approach for production deployments with multiple instances behind a load balancer.
 
+### Built-in KeyDerivation Utility (optional)
+
+Jwt Security ships with a `KeyDerivation` utility class that derives a deterministic 32-byte key from a context string using HKDF with HMAC-SHA256. This produces a seed suitable for Ed25519 key pair derivation, and can be used directly with the settings provider:
+
+```java
+import io.github.trae.jwtsecurity.utility.KeyDerivation;
+
+@Override
+public byte[] getAccessTokenKeySeed() {
+    return KeyDerivation.derive("my-master-secret:access");
+}
+
+@Override
+public byte[] getRefreshTokenKeySeed() {
+    return KeyDerivation.derive("my-master-secret:refresh");
+}
+```
+
+This is entirely optional — you can use any key derivation strategy (HKDF, PBKDF2, etc.) as long as the seed methods return a consistent 32-byte array for the same input across all application instances.
+
 ### Ephemeral Keys (default)
 
 When the seed methods return `null`, new key pairs are generated at startup using the JDK's built-in Ed25519 provider. All outstanding tokens are invalidated on every restart. This is the most secure option and suitable for applications where forced re-authentication on deploy is acceptable.
+
+> **Note:** If you use a randomly generated string (e.g. `UUID.randomUUID().toString()`) as your secret at runtime instead of a fixed configuration value, the derived seeds will be different on every JVM restart. This effectively behaves the same as ephemeral keys — all existing access tokens and refresh tokens will be invalidated each time the application starts, since the Ed25519 key pairs will differ from the previous run.
 
 ---
 
