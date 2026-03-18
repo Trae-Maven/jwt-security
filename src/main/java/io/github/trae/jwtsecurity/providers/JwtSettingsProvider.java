@@ -1,31 +1,35 @@
 package io.github.trae.jwtsecurity.providers;
 
+import java.time.Duration;
+
 /**
  * Provider interface for environment and application settings required by the JWT security framework.
  * The consuming application must implement this and register it as a Spring bean.
  *
  * <p>Example implementation:</p>
- * <pre>
- * &#64;Service
+ * <pre>{@code
+ * @Service
  * public class MyJwtSettings implements JwtSettingsProvider {
  *
- *     &#64;Override
+ *     @Override
  *     public boolean isProduction() { return true; }
  *
- *     &#64;Override
+ *     @Override
+ *     public Duration getAccessTokenExpiration() { return Duration.ofMinutes(5); }
+ *
+ *     @Override
+ *     public Duration getRefreshTokenExpiration() { return Duration.ofDays(14); }
+ *
+ *     @Override
  *     public String getIssuer() { return "myapp.com"; }
  *
- *     &#64;Override
- *     public byte[] getAccessTokenKeySeed() {
- *         return null;
- *     }
+ *     @Override
+ *     public byte[] getAccessTokenKeySeed() { return null; }
  *
- *     &#64;Override
- *     public byte[] getRefreshTokenKeySeed() {
- *         return null;
- *     }
+ *     @Override
+ *     public byte[] getRefreshTokenKeySeed() { return null; }
  * }
- * </pre>
+ * }</pre>
  *
  * <p>When key seeds are provided, deterministic Ed25519 key pairs are derived from them
  * using BouncyCastle. Every application instance with the same master secret produces
@@ -43,6 +47,30 @@ public interface JwtSettingsProvider {
      * @return true if production
      */
     boolean isProduction();
+
+    /**
+     * The lifetime of access tokens. Access tokens are short-lived and validated
+     * statelessly on every authenticated request.
+     *
+     * <p>Recommended: 5 minutes. Shorter lifetimes limit the window of abuse
+     * for stolen tokens since there is no server-side revocation mechanism
+     * for access tokens.</p>
+     *
+     * @return the access token expiration duration
+     */
+    Duration getAccessTokenExpiration();
+
+    /**
+     * The lifetime of refresh tokens. Refresh tokens are long-lived and used to
+     * silently re-issue access tokens via rotation. Each refresh token is single-use;
+     * a new refresh token is issued on every rotation.
+     *
+     * <p>Recommended: 7–14 days. Longer lifetimes reduce the frequency of
+     * forced re-authentication at the cost of a wider revocation window.</p>
+     *
+     * @return the refresh token expiration duration
+     */
+    Duration getRefreshTokenExpiration();
 
     /**
      * The JWT issuer claim value. Typically the application name or domain.

@@ -299,12 +299,12 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
 
         // Store the refresh token hash server-side for rotation and reuse detection.
         // On the next refresh, the presented JTI is hashed and compared — mismatch means theft.
-        account.setRefreshToken(new RefreshToken(UtilHash.hashToString("SHA-512", refreshJti.toString()), now + JwtConstants.REFRESH_TOKEN_EXPIRATION_DURATION.toMillis()));
+        account.setRefreshToken(new RefreshToken(UtilHash.hashToString("SHA-512", refreshJti.toString()), now + this.settings.getRefreshTokenExpiration().toMillis()));
         this.accountManager.updateAccountRefreshToken(account);
 
-        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.ACCESS_TOKEN.getKey(), accessToken, true, JwtConstants.ACCESS_TOKEN_EXPIRATION_DURATION, SERIALIZE_COOKIE);
-        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.REFRESH_TOKEN.getKey(), refreshToken, true, JwtConstants.REFRESH_TOKEN_EXPIRATION_DURATION, SERIALIZE_COOKIE);
-        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, JwtConstants.FINGERPRINT_COOKIE, rawFingerprint, true, JwtConstants.REFRESH_TOKEN_EXPIRATION_DURATION, SERIALIZE_COOKIE);
+        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.ACCESS_TOKEN.getKey(), accessToken, true, this.settings.getAccessTokenExpiration(), SERIALIZE_COOKIE);
+        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.REFRESH_TOKEN.getKey(), refreshToken, true, this.settings.getRefreshTokenExpiration(), SERIALIZE_COOKIE);
+        UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, JwtConstants.FINGERPRINT_COOKIE, rawFingerprint, true, this.settings.getRefreshTokenExpiration(), SERIALIZE_COOKIE);
     }
 
     /**
@@ -528,7 +528,7 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
      */
     private String buildToken(final PrivateKey signingKey, final Account account, final TokenType tokenType, final UUID jti, final String fingerprintHash) {
         final Date now = new Date();
-        final Date expiry = new Date(now.getTime() + tokenType.getExpiration().toMillis());
+        final Date expiry = new Date(now.getTime() + tokenType.getExpirationFunction().apply(this.settings).toMillis());
 
         final JwtBuilder jwtBuilder = Jwts.builder()
                 .id(jti.toString())

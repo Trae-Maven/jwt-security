@@ -14,6 +14,7 @@ Built for modern Java (Java 21+) and designed to integrate seamlessly with exist
 
 - Ed25519 (EdDSA) asymmetric signatures — no shared secrets, FAPI 2.0 compliant, TLS 1.3 approved
 - Separate key pairs for access and refresh tokens (key isolation)
+- Configurable token lifetimes — set access and refresh expiration via the settings provider
 - Deterministic or ephemeral key pairs — derive from a master secret for multi-instance, or generate fresh on startup
 - Token fingerprint binding — defeats token theft via XSS
 - Refresh token rotation with reuse detection — replayed tokens trigger full account revocation
@@ -34,7 +35,6 @@ Built for modern Java (Java 21+) and designed to integrate seamlessly with exist
 Jwt Security is designed for Spring-based web applications.
 
 Your project must already include the following dependencies (these are typically already included in most Spring Boot applications):
-
 ```xml
 <dependency>
     <groupId>org.projectlombok</groupId>
@@ -77,7 +77,6 @@ These dependencies are marked as **provided** inside Jwt Security because they a
 Jwt Security includes several dependencies that are automatically included when you install the library.
 
 - [Utilities](https://github.com/Trae-Maven/utilities) – Shared helper classes and performance-focused utilities used internally by the framework.
-
 ```xml
 <dependency>
     <groupId>io.jsonwebtoken</groupId>
@@ -105,7 +104,6 @@ These dependencies are automatically included when installing Jwt Security and d
 ## Installation
 
 Add the dependency to your Maven project:
-
 ```xml
 <dependency>
     <groupId>io.github.trae</groupId>
@@ -123,7 +121,6 @@ Jwt Security requires five classes to be set up in your application. Each provid
 ### 1. Define Your Role Enum
 
 Create a role enum that implements `JwtAccountRoleProvider`:
-
 ```java
 public enum Role implements JwtAccountRoleProvider {
     ADMINISTRATOR, MODERATOR, STANDARD
@@ -133,7 +130,6 @@ public enum Role implements JwtAccountRoleProvider {
 ### 2. Implement Your Account Entity
 
 Your account class must implement `JwtAccountProvider` with your role enum:
-
 ```java
 @AllArgsConstructor
 @Getter
@@ -153,7 +149,6 @@ public class Account implements JwtAccountProvider<Role> {
 ### 3. Implement Your Account Manager
 
 Create a service that handles account persistence:
-
 ```java
 @AllArgsConstructor
 @Service
@@ -180,16 +175,21 @@ public class AccountManager implements JwtAccountManagerProvider<Account> {
 
 ### 4. Implement Your Settings
 
-Configure the JWT service with your environment settings.
+Configure the JWT service with your environment settings, token lifetimes, and key derivation strategy.
 
 **Deterministic keys** (recommended for multi-instance deployments):
-
 ```java
 @Component
 public class MyJwtSettings implements JwtSettingsProvider {
 
     @Override
     public boolean isProduction() { return true; }
+
+    @Override
+    public Duration getAccessTokenExpiration() { return Duration.ofMinutes(5); }
+
+    @Override
+    public Duration getRefreshTokenExpiration() { return Duration.ofDays(14); }
 
     @Override
     public String getIssuer() { return "myapp.com"; }
@@ -206,8 +206,14 @@ public class MyJwtSettings implements JwtSettingsProvider {
 }
 ```
 
-**Ephemeral keys** (tokens invalidated on every restart):
+**Token lifetime recommendations:**
 
+| Token | Recommended | Range | Notes |
+|---|---|---|---|
+| Access | 5 minutes | 1–15 min | Shorter = less exposure from stolen tokens. No server-side revocation, so lifetime is the only control. |
+| Refresh | 14 days | 7–30 days | Longer = fewer forced re-logins. Rotation and reuse detection limit the risk. |
+
+**Ephemeral keys** (tokens invalidated on every restart):
 ```java
 @Override
 public byte[] getAccessTokenKeySeed() { return null; }
@@ -219,7 +225,6 @@ public byte[] getRefreshTokenKeySeed() { return null; }
 ### 5. Create Your JwtService Subclass
 
 Create a concrete subclass that binds all the generic types in one place. This avoids repeating `JwtService<MyJwtSettings, AccountManager, Account, Role>` at every injection site across your application:
-
 ```java
 @Service
 public class MyJwtService extends JwtService<MyJwtSettings, AccountManager, Account, Role> {
@@ -249,7 +254,6 @@ This is the recommended approach for production deployments with multiple instan
 ### Built-in KeyDerivation Utility (optional)
 
 Jwt Security ships with a `KeyDerivation` utility class that derives a deterministic 32-byte key from a context string using HKDF with HMAC-SHA256. This produces a seed suitable for Ed25519 key pair derivation, and can be used directly with the settings provider:
-
 ```java
 import io.github.trae.jwtsecurity.utility.KeyDerivation;
 
@@ -277,7 +281,6 @@ When the seed methods return `null`, new key pairs are generated at startup usin
 ## Usage
 
 Once your `MyJwtService` is registered, inject it anywhere in your application — no generics required:
-
 ```java
 @AllArgsConstructor
 @Controller
@@ -327,6 +330,7 @@ public class AuthController {
 | **Signature Algorithm** | Ed25519 (EdDSA) — asymmetric, deterministic, side-channel resistant |
 | **Key Isolation** | Separate key pairs for access and refresh tokens |
 | **Key Derivation** | HKDF from master secret → deterministic Ed25519 seeds (multi-instance safe) |
+| **Token Lifetimes** | Configurable via settings provider — recommended 5min access / 14 day refresh |
 | **Token Binding** | Fingerprint hash in JWT + raw value in HttpOnly cookie |
 | **XSS Defence** | HttpOnly cookies — JavaScript cannot access token values |
 | **CSRF Defence** | SameSite=Strict in production — browser blocks cross-origin requests |
