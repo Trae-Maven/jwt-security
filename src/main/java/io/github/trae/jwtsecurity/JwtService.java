@@ -623,20 +623,44 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * Single unified method that resolves an authenticated account from the request.
-     *
-     * <p>Tries the access token first (fast path — no DB writes, no token rotation).
-     * If the access token is invalid or expired, falls back to refresh token rotation
-     * which validates the refresh token, issues new tokens, and persists the updated state.</p>
-     *
-     * <p>All public authentication methods ({@link #isAuthenticated}, {@link #isAuthenticatedByRole},
-     * {@link #getAccountByRequest}) delegate to this single method — no split logic, no hidden state.</p>
+     * Resolve the authenticated account from the request, caching the result
+     * on the request attributes to prevent multiple auth resolutions within
+     * the same HTTP request. This avoids refresh token rotation being triggered
+     * more than once, which would cause reuse detection and session revocation.
      *
      * @param httpServletRequest  the incoming request
      * @param httpServletResponse the outgoing response (used to write new cookies on rotation)
      * @return the authenticated account, or empty if no valid session exists
      */
     private Optional<Account> resolveAuthenticatedAccount(final HttpServletRequest httpServletRequest, final HttpServletResponse httpServletResponse) {
+        // Check if we already resolved auth for this request — prevents double rotation.
+        final Object cached = httpServletRequest.getAttribute("__resolved_account");
+        if (cached != null) {
+            @SuppressWarnings("unchecked") final Optional<Account> cachedAccount = (Optional<Account>) cached;
+            return cachedAccount;
+        }
+
+        final Optional<Account> result = this.resolveAuthenticatedAccountInternal(httpServletRequest, httpServletResponse);
+
+        // Cache the result (success or failure) so subsequent calls within
+        // the same request (e.g. isAuthenticated -> getAccountByRequest) return instantly.
+        httpServletRequest.setAttribute("__resolved_account", result);
+
+        return result;
+    }
+
+    /**
+     * Internal authentication resolution logic.
+     *
+     * <p>Tries the access token first (fast path — no DB writes, no token rotation).
+     * If the access token is invalid or expired, falls back to refresh token rotation
+     * which validates the refresh token, issues new tokens, and persists the updated state.</p>
+     *
+     * @param httpServletRequest  the incoming request
+     * @param httpServletResponse the outgoing response (used to write new cookies on rotation)
+     * @return the authenticated account, or empty if no valid session exists
+     */
+    private Optional<Account> resolveAuthenticatedAccountInternal(final HttpServletRequest httpServletRequest, final HttpServletResponse httpServletResponse) {
         // Fast path — validate the access token without any DB writes or token rotation.
         final String accessToken = this.getAuthenticatedToken(httpServletRequest, TokenType.ACCESS_TOKEN);
         if (accessToken != null) {
