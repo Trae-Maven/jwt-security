@@ -18,8 +18,9 @@ Built for modern Java (Java 21+) and designed to integrate seamlessly with exist
 - Deterministic or ephemeral key pairs — derive from a master secret for multi-instance, or generate fresh on startup
 - Token fingerprint binding — defeats token theft via XSS
 - Refresh token rotation with reuse detection — replayed tokens trigger full account revocation
+- Concurrent rotation grace window — prevents false reuse detection from parallel browser requests
 - Constant-time hash comparisons to prevent timing side-channel attacks
-- lastTokenIssueAt validation — instant global token invalidation without a blocklist
+- lastTokenIssueAt validation — instant global token invalidation without a blocklist (security events only)
 - `__Host-` cookie prefix in production — browser-enforced Secure + Path=/ + no Domain
 - JWT token generation and validation
 - Token parsing and claim access
@@ -291,7 +292,7 @@ public class AuthController {
     @PostMapping("/login")
     public String login(HttpServletRequest request, HttpServletResponse response) {
         Account account = this.authenticate(request); // your authentication logic
-        this.jwtService.applyTokenCookies(response, account);
+        this.jwtService.applyTokenCookies(request, response, account);
         return "redirect:/dashboard";
     }
 
@@ -337,7 +338,8 @@ public class AuthController {
 | **Cookie Hardening** | `__Host-` prefix enforces Secure + Path=/ + no Domain |
 | **Token Theft** | Fingerprint binding makes stolen JWTs unusable without the cookie |
 | **Replay Prevention** | Refresh token JTI hash verified server-side on every rotation |
-| **Reuse Detection** | Mismatched refresh token hash triggers full account revocation |
-| **Session Invalidation** | lastTokenIssueAt — update the timestamp to revoke all tokens instantly |
+| **Reuse Detection** | Mismatched refresh token hash triggers full account revocation (with grace window for concurrent requests) |
+| **Concurrent Safety** | Rotation grace window prevents false reuse detection from parallel browser requests |
+| **Session Invalidation** | lastTokenIssueAt — updated on security events (login, password change, forced logout) to revoke all tokens instantly |
 | **Timing Attacks** | Constant-time hash comparisons on all verification checks |
 | **Memory Safety** | Key seeds wiped from memory immediately after derivation |

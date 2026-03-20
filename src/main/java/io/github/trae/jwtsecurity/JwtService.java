@@ -66,6 +66,20 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
      */
     private static final boolean SERIALIZE_COOKIE = true;
 
+    /**
+     * Grace window (in milliseconds) for concurrent refresh rotation race conditions.
+     *
+     * <p>When a refresh token JTI mismatch is detected, and the stored refresh token
+     * was rotated within this window, the mismatch is treated as a benign concurrent
+     * request race rather than a genuine reuse attack. The request is silently rejected
+     * (returns empty) but the session is NOT revoked.</p>
+     *
+     * <p>Genuine token reuse attacks will present stale JTIs well outside this window,
+     * since the attacker must first intercept the token, then use it after the legitimate
+     * user has already rotated — a gap that is always significantly larger than 5 seconds.</p>
+     */
+    private static final long ROTATION_GRACE_MILLIS = 5000L;
+
     private final Settings settings;
 
     private final AccountManager accountManager;
@@ -256,25 +270,67 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
     /**
      * Issue new access and refresh tokens for the account and write them as secure cookies.
      *
+     * <p>This is the <strong>public entry point</strong> for token issuance — called by the
+     * consuming application on login, password change, or any security event that should
+     * invalidate all prior tokens globally.</p>
+     *
      * <p>This method performs the following steps:</p>
      * <ol>
      *   <li>Updates the account's lastTokenIssueAt timestamp (invalidating all prior tokens)</li>
-     *   <li>Generates a cryptographically random fingerprint and its SHA-256 hash</li>
-     *   <li>Builds Ed25519-signed access and refresh tokens with the fingerprint hash embedded</li>
-     *   <li>Stores the refresh token's SHA-512 hash server-side for rotation/reuse detection</li>
-     *   <li>Writes all three cookies (access token, refresh token, fingerprint) to the response</li>
+     *   <li>Delegates to {@link #issueTokenCookies} for fingerprint, token generation, and cookie writing</li>
      * </ol>
      *
+     * @param httpServletRequest  the incoming request (used to read the existing fingerprint cookie)
      * @param httpServletResponse the outgoing response to write cookies to
      * @param account             the account to issue tokens for
      */
     @Override
     public void applyTokenCookies(final HttpServletRequest httpServletRequest, final HttpServletResponse httpServletResponse, final Account account) {
-        final long now = System.currentTimeMillis();
-
         // Update the issuance timestamp — all tokens issued before this moment become invalid.
-        account.setLastTokenIssueAt(now);
+        // This is the global invalidation mechanism for security events (login, password change, forced logout).
+        account.setLastTokenIssueAt(System.currentTimeMillis());
         this.accountManager.updateAccountLastTokenIssueAt(account);
+
+        this.issueTokenCookies(httpServletRequest, httpServletResponse, account);
+    }
+
+    /**
+     * Rotate tokens during an internal refresh cycle without updating lastTokenIssueAt.
+     *
+     * <p>This is called internally when a valid refresh token is presented and rotated.
+     * It issues new access + refresh tokens with the account's <em>existing</em>
+     * lastTokenIssueAt value, so concurrent requests holding tokens from the same
+     * issuance epoch remain valid until their natural expiry.</p>
+     *
+     * <p>Security is maintained because:</p>
+     * <ul>
+     *   <li>The refresh token JTI is rotated — the old JTI can never be used again</li>
+     *   <li>Reuse detection still triggers on stale JTIs outside the grace window</li>
+     *   <li>Explicit security events (password change, forced logout) still call
+     *       {@link #applyTokenCookies} which bumps lastTokenIssueAt and nukes everything</li>
+     * </ul>
+     *
+     * @param httpServletRequest  the incoming request (used to read the existing fingerprint cookie)
+     * @param httpServletResponse the outgoing response to write cookies to
+     * @param account             the account to rotate tokens for
+     */
+    private void rotateTokenCookies(final HttpServletRequest httpServletRequest, final HttpServletResponse httpServletResponse, final Account account) {
+        this.issueTokenCookies(httpServletRequest, httpServletResponse, account);
+    }
+
+    /**
+     * Core token issuance logic shared by both {@link #applyTokenCookies} and {@link #rotateTokenCookies}.
+     *
+     * <p>Generates a fingerprint (or reuses the existing one), builds Ed25519-signed
+     * access and refresh tokens, stores the refresh JTI hash server-side, and writes
+     * all three cookies to the response.</p>
+     *
+     * @param httpServletRequest  the incoming request (used to read the existing fingerprint cookie)
+     * @param httpServletResponse the outgoing response to write cookies to
+     * @param account             the account to issue tokens for
+     */
+    private void issueTokenCookies(final HttpServletRequest httpServletRequest, final HttpServletResponse httpServletResponse, final Account account) {
+        final long now = System.currentTimeMillis();
 
         // Retrieve the existing fingerprint cookie if one already exists.
         // This fingerprint binds the JWT to the browser via an HttpOnly cookie.
@@ -298,8 +354,9 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
         final String refreshToken = this.generateRefreshTokenWithFingerprintHash(account, refreshJti, fingerprintHash);
 
         // Store the refresh token hash server-side for rotation and reuse detection.
-        // On the next refresh, the presented JTI is hashed and compared — mismatch means theft.
-        account.setRefreshToken(new RefreshToken(UtilHash.hashToString("SHA-512", refreshJti.toString()), now + this.settings.getRefreshTokenExpiration().toMillis()));
+        // The rotatedAt timestamp is recorded so concurrent rotation races can be distinguished
+        // from genuine reuse attacks (see getRefreshAsAccount for the grace window logic).
+        account.setRefreshToken(new RefreshToken(UtilHash.hashToString("SHA-512", refreshJti.toString()), now + this.settings.getRefreshTokenExpiration().toMillis(), now));
         this.accountManager.updateAccountRefreshToken(account);
 
         UtilCookie.setCookie(this.settings.isProduction(), httpServletResponse, TokenType.ACCESS_TOKEN.getKey(), accessToken, true, this.settings.getAccessTokenExpiration(), SERIALIZE_COOKIE);
@@ -413,9 +470,21 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
         }
 
         // Verify the JTI hash — the core refresh token rotation check.
-        // If the hash doesn't match, a previously rotated token is being replayed.
-        // Nuke all tokens for the account to force re-authentication.
+        // If the hash doesn't match, determine whether this is a benign concurrent
+        // rotation race or a genuine reuse attack using the rotatedAt grace window.
         if (!(storedRefreshToken.verify(claims.getId()))) {
+            // If the stored token was rotated very recently, this is almost certainly a concurrent
+            // request that arrived with the old refresh token before the browser received new cookies.
+            // Silently reject the request without nuking the session — the concurrent request that
+            // successfully rotated has already issued valid new tokens to the browser.
+            if (System.currentTimeMillis() - storedRefreshToken.getRotatedAt() < ROTATION_GRACE_MILLIS) {
+                LOGGER.debug("Refresh JTI mismatch within rotation grace window for account: {}, treating as concurrent race", accountId.toString());
+                return Optional.empty();
+            }
+
+            // Outside the grace window — this is a genuine reuse attack.
+            // A previously rotated token is being replayed long after the legitimate rotation.
+            // Nuke all tokens for the account to force re-authentication.
             LOGGER.error("REFRESH TOKEN RE-USE DETECTED for account: {}, revoking all tokens", accountId.toString());
             account.setLastTokenIssueAt(0L);
             account.setRefreshToken(null);
@@ -686,8 +755,10 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
 
         final Account refreshedAccount = refreshedAccountOptional.get();
 
-        // Issue new tokens — the old refresh JTI hash is overwritten during rotation.
-        this.applyTokenCookies(httpServletRequest, httpServletResponse, refreshedAccount);
+        // Rotate tokens — issues new access + refresh tokens WITHOUT bumping lastTokenIssueAt.
+        // This preserves session continuity for concurrent requests holding the previous access token.
+        // Security events (login, password change) use applyTokenCookies which does bump lastTokenIssueAt.
+        this.rotateTokenCookies(httpServletRequest, httpServletResponse, refreshedAccount);
 
         return Optional.of(refreshedAccount);
     }
