@@ -475,11 +475,12 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
         if (!(storedRefreshToken.verify(claims.getId()))) {
             // If the stored token was rotated very recently, this is almost certainly a concurrent
             // request that arrived with the old refresh token before the browser received new cookies.
-            // Silently reject the request without nuking the session — the concurrent request that
-            // successfully rotated has already issued valid new tokens to the browser.
+            // The session is still valid — return the account but flag the request so the caller
+            // knows NOT to rotate again (the winning request already issued new cookies).
             if (System.currentTimeMillis() - storedRefreshToken.getRotatedAt() < ROTATION_GRACE_MILLIS) {
                 LOGGER.debug("Refresh JTI mismatch within rotation grace window for account: {}, treating as concurrent race", accountId.toString());
-                return Optional.empty();
+                httpServletRequest.setAttribute("__refresh_grace_hit", Boolean.TRUE);
+                return Optional.of(account);
             }
 
             // Outside the grace window — this is a genuine reuse attack.
@@ -754,6 +755,13 @@ public class JwtService<Settings extends JwtSettingsProvider, AccountManager ext
         }
 
         final Account refreshedAccount = refreshedAccountOptional.get();
+
+        // If this request hit the rotation grace window, the session is valid but another
+        // concurrent request already rotated the tokens. Return the account WITHOUT rotating
+        // again — the browser will receive updated cookies from the request that won the race.
+        if (Boolean.TRUE.equals(httpServletRequest.getAttribute("__refresh_grace_hit"))) {
+            return Optional.of(refreshedAccount);
+        }
 
         // Rotate tokens — issues new access + refresh tokens WITHOUT bumping lastTokenIssueAt.
         // This preserves session continuity for concurrent requests holding the previous access token.
