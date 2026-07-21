@@ -110,7 +110,7 @@ Add the dependency to your Maven project. Because jjwt bundles Jackson 2, which 
 <dependency>
     <groupId>io.github.trae</groupId>
     <artifactId>jwt-security</artifactId>
-    <version>0.0.2</version>
+    <version>0.0.3</version>
     <exclusions>
         <exclusion>
             <groupId>com.fasterxml.jackson.core</groupId>
