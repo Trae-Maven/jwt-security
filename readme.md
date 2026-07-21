@@ -93,7 +93,7 @@ Jwt Security includes several dependencies that are automatically included when 
 
 <dependency>
     <groupId>io.jsonwebtoken</groupId>
-    <artifactId>jjwt-jackson</artifactId>
+    <artifactId>jjwt-gson</artifactId>
     <version>0.13.0</version>
 </dependency>
 ```
@@ -104,34 +104,13 @@ These dependencies are automatically included when installing Jwt Security and d
 
 ## Installation
 
-Add the dependency to your Maven project. Because jjwt bundles Jackson 2, which clashes with Spring Boot 4 / Jackson 3, you must exclude jjwt's transitive Jackson and provide a modern Jackson 2 Databind:
+Add the dependency to your Maven project:
 
 ```xml
 <dependency>
     <groupId>io.github.trae</groupId>
     <artifactId>jwt-security</artifactId>
     <version>0.0.3</version>
-    <exclusions>
-        <exclusion>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </exclusion>
-        <exclusion>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-annotations</artifactId>
-        </exclusion>
-        <exclusion>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-core</artifactId>
-        </exclusion>
-    </exclusions>
-</dependency>
-
-<dependency>
-    <groupId>com.fasterxml.jackson.core</groupId>
-    <artifactId>jackson-databind</artifactId>
-    <version>2.18.2</version>
-    <scope>runtime</scope>
 </dependency>
 ```
 
