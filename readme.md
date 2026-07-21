@@ -40,32 +40,32 @@ Your project must already include the following dependencies (these are typicall
 <dependency>
     <groupId>org.projectlombok</groupId>
     <artifactId>lombok</artifactId>
-    <version>1.18.36</version>
+    <version>1.18.46</version>
     <scope>provided</scope>
 </dependency>
 
 <dependency>
     <groupId>org.springframework</groupId>
     <artifactId>spring-context</artifactId>
-    <version>7.0.3</version>
+    <version>7.0.8</version>
 </dependency>
 
 <dependency>
     <groupId>org.springframework</groupId>
     <artifactId>spring-web</artifactId>
-    <version>7.0.3</version>
+    <version>7.0.8</version>
 </dependency>
 
 <dependency>
     <groupId>jakarta.servlet</groupId>
     <artifactId>jakarta.servlet-api</artifactId>
-    <version>6.0.0</version>
+    <version>6.1.0</version>
 </dependency>
 
 <dependency>
     <groupId>org.bouncycastle</groupId>
     <artifactId>bcprov-jdk18on</artifactId>
-    <version>1.83</version>
+    <version>1.84</version>
 </dependency>
 ```
 
@@ -82,19 +82,19 @@ Jwt Security includes several dependencies that are automatically included when 
 <dependency>
     <groupId>io.jsonwebtoken</groupId>
     <artifactId>jjwt-api</artifactId>
-    <version>0.12.5</version>
+    <version>0.13.0</version>
 </dependency>
 
 <dependency>
     <groupId>io.jsonwebtoken</groupId>
     <artifactId>jjwt-impl</artifactId>
-    <version>0.12.5</version>
+    <version>0.13.0</version>
 </dependency>
 
 <dependency>
     <groupId>io.jsonwebtoken</groupId>
     <artifactId>jjwt-jackson</artifactId>
-    <version>0.12.5</version>
+    <version>0.13.0</version>
 </dependency>
 ```
 
@@ -104,12 +104,34 @@ These dependencies are automatically included when installing Jwt Security and d
 
 ## Installation
 
-Add the dependency to your Maven project:
+Add the dependency to your Maven project. Because jjwt bundles Jackson 2, which clashes with Spring Boot 4 / Jackson 3, you must exclude jjwt's transitive Jackson and provide a modern Jackson 2 Databind:
+
 ```xml
 <dependency>
     <groupId>io.github.trae</groupId>
     <artifactId>jwt-security</artifactId>
     <version>0.0.2</version>
+    <exclusions>
+        <exclusion>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </exclusion>
+        <exclusion>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+        </exclusion>
+        <exclusion>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+        </exclusion>
+    </exclusions>
+</dependency>
+
+<dependency>
+    <groupId>com.fasterxml.jackson.core</groupId>
+    <artifactId>jackson-databind</artifactId>
+    <version>2.18.2</version>
+    <scope>runtime</scope>
 </dependency>
 ```
 
