@@ -1,5 +1,7 @@
 package io.github.trae.jwtsecurity.utility;
 
+import lombok.experimental.UtilityClass;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +17,7 @@ import java.util.Arrays;
  * <p>The derivation is deterministic — the same context string always produces
  * the same 32-byte key.</p>
  */
+@UtilityClass
 public class KeyDerivation {
 
     /**

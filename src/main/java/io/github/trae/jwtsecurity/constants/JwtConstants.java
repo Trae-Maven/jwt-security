@@ -1,8 +1,11 @@
 package io.github.trae.jwtsecurity.constants;
 
+import lombok.experimental.UtilityClass;
+
 /**
  * Constants used throughout the JWT security framework.
  */
+@UtilityClass
 public class JwtConstants {
 
     /**

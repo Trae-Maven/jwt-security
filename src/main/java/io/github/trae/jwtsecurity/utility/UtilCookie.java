@@ -5,6 +5,7 @@ import io.github.trae.utilities.UtilString;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.experimental.UtilityClass;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 
@@ -18,6 +19,7 @@ import java.util.function.Function;
  * <p>In production mode, cookies are prefixed with {@code __Host-} which instructs
  * the browser to enforce {@code Secure}, {@code Path=/}, and no {@code Domain} attribute.</p>
  */
+@UtilityClass
 public class UtilCookie {
 
     private static final Function<String, String> SERIALIZER_FUNCTION = cookieValue -> cookieValue == null ? null : UtilBase64.encodeToString(cookieValue);
